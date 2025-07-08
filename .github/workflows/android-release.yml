@@ -1,0 +1,57 @@
+name: Build, Sign & Release BitChat
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tag pushes like v1.0.0
+
+jobs:
+  build:
+    name: Build & Sign APK
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Decode keystore from secret
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+
+    - name: Set up Gradle
+      uses: gradle/gradle-build-action@v3
+
+    - name: Grant permission to execute Gradle
+      run: chmod +x ./gradlew
+
+    - name: Assemble release APK
+      run: ./gradlew assembleRelease
+
+    - name: Sign APK
+      run: |
+        jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+          -keystore keystore.jks \
+          -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
+          -keypass ${{ secrets.KEY_PASSWORD }} \
+          app/build/outputs/apk/release/app-release-unsigned.apk \
+          ${{ secrets.KEY_ALIAS }}
+
+    - name: Zipalign APK
+      run: |
+        sudo apt-get update && sudo apt-get install -y zipalign
+        zipalign -v -p 4 \
+          app/build/outputs/apk/release/app-release-unsigned.apk \
+          app-release-signed.apk
+
+    - name: Upload Release Artifact
+      uses: softprops/action-gh-release@v2
+      with:
+        files: app-release-signed.apk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
